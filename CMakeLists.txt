@@ -149,7 +149,7 @@ findorfetch(
   USE_SYSTEM_PACKAGE
   MJPC_USE_SYSTEM_GLFW
   PACKAGE_NAME
-  glfw
+  glfw3
   LIBRARY_NAME
   glfw
   GIT_REPO

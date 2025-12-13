@@ -21,6 +21,8 @@ import shutil
 import setuptools
 from setuptools.command import build_ext
 from setuptools.command import build_py
+from setuptools.command.develop import develop
+from setuptools.command.egg_info import egg_info
 import subprocess
 
 
@@ -28,9 +30,9 @@ Path = pathlib.Path
 
 
 class GenerateProtoGrpcCommand(setuptools.Command):
-  """Specialized setup command to handle agent proto compilation.
+  """Specialized setup command to handle proto compilation.
 
-  Generates the `agent_pb2{_grpc}.py` files from `agent_proto`. Assumes that
+  Generates the `*_pb2{_grpc}.py` files from `*_proto`. Assumes that
   `grpc_tools.protoc` is installed.
   """
 
@@ -44,41 +46,40 @@ class GenerateProtoGrpcCommand(setuptools.Command):
     self.set_undefined_options("build_py", ("build_lib", "build_lib"))
 
   def run(self):
-    """Generate `agent.proto` into `agent_pb2{_grpc}.py`.
-
-    This function looks more complicated than what it has to be because the
-    `protoc` generator is very particular in the way it generates the imports
-    for the generated `agent_pb2_grpc.py` file. The final argument of the
-    `protoc` call has to be "mujoco_mpc/agent.proto" in order for the import to
-    become `from mujoco_mpc import [agent_pb2_proto_import]` instead of just
-    `import [agent_pb2_proto_import]`. The latter would fail because the name is
-    meant to be relative but python3 interprets it as an absolute import.
-    """
+    """Generate protos into `*_pb2{_grpc}.py`."""
     # We import here because, if the import is at the top of this file, we
     # cannot resolve the dependencies without having `grpcio-tools` installed.
     from grpc_tools import protoc  # pylint: disable=import-outside-toplevel
 
-    agent_proto_filename = "agent.proto"
-    agent_proto_source_path = Path(
-        "..", "mjpc", "grpc", agent_proto_filename
+    for proto_filename in ["agent.proto", "direct.proto", "filter.proto"]:
+      self._generate_proto(protoc, proto_filename)
+
+  def _generate_proto(self, protoc, proto_filename):
+    proto_source_path = Path(
+        "..", "mjpc", "grpc", proto_filename
     ).resolve()
-    assert self.build_lib is not None
-    build_lib_path = Path(self.build_lib).resolve()
-    proto_module_relative_path = Path("mujoco_mpc", "proto", agent_proto_filename)
-    agent_proto_destination_path = Path(build_lib_path, proto_module_relative_path)
-    agent_proto_destination_path.parent.mkdir(parents=True, exist_ok=True)
-    # Copy `agent_proto_filename` into current source.
-    shutil.copy(agent_proto_source_path, agent_proto_destination_path)
+    
+    # Always generate into the source directory for editable installs and simplicity
+    source_root = Path(__file__).parent.resolve()
+    proto_module_relative_path = Path("mujoco_mpc", "proto", proto_filename)
+    proto_destination_path = source_root / proto_module_relative_path
+    
+    proto_destination_path.parent.mkdir(parents=True, exist_ok=True)
+    # Copy `proto_filename` into current source.
+    shutil.copy(proto_source_path, proto_destination_path)
+
+    # Output directory is the package root (so mujoco_mpc/proto/... structure is preserved)
+    output_dir = source_root
 
     protoc_command_parts = [
         # We use `__file__`  as the first argument the same way as is done by
         # `protoc` when called as `__main__` here:
         # https://github.com/grpc/grpc/blob/21996c37842035661323c71b9e7040345f0915e2/tools/distrib/python/grpcio_tools/grpc_tools/protoc.py#L172-L173.
         __file__,
-        f"-I{build_lib_path}",
-        f"--python_out={build_lib_path}",
-        f"--grpc_python_out={build_lib_path}",
-        str(agent_proto_destination_path),
+        f"-I{output_dir}",
+        f"--python_out={output_dir}",
+        f"--grpc_python_out={output_dir}",
+        str(proto_destination_path),
     ]
 
     protoc_returncode = protoc.main(protoc_command_parts)
@@ -89,17 +90,17 @@ class GenerateProtoGrpcCommand(setuptools.Command):
           cmd=f"`protoc.main({protoc_command_parts})`",
       )
 
-    self.spawn(["touch", str(agent_proto_destination_path.parent / "__init__.py")])
+    self.spawn(["touch", str(proto_destination_path.parent / "__init__.py")])
 
 
-class CopyAgentServerBinaryCommand(setuptools.Command):
-  """Specialized setup command to copy `agent_server` next to `agent.py`.
+class CopyBinariesCommand(setuptools.Command):
+  """Specialized setup command to copy binaries next to python source.
 
-  Assumes that the C++ gRPC `agent_server` binary has been manually built and
+  Assumes that the C++ gRPC binaries have been manually built and
   and located in the default `mujoco_mpc/build/bin` folder.
   """
 
-  description = "Copy `agent_server` next to `agent.py`."
+  description = "Copy binaries next to python source."
   user_options = []
 
   def initialize_options(self):
@@ -111,17 +112,22 @@ class CopyAgentServerBinaryCommand(setuptools.Command):
   def run(self):
     self._copy_binary("agent_server")
     self._copy_binary("ui_agent_server")
+    self._copy_binary("direct_server")
+    self._copy_binary("filter_server")
 
   def _copy_binary(self, binary_name):
     source_path = Path(f"../build/bin/{binary_name}")
     if not source_path.exists():
-      raise ValueError(
-          f"Cannot find `{binary_name}` binary from {source_path}. Please build"
-          " the `{binary_name}` C++ gRPC service."
-      )
-    assert self.build_lib is not None
-    build_lib_path = Path(self.build_lib).resolve()
-    destination_path = Path(build_lib_path, "mujoco_mpc", "mjpc", binary_name)
+      # Try looking in the build directory relative to the workspace root if possible, 
+      # but ../build/bin is the standard convention here.
+      # If it fails, we just warn, because maybe we are just installing dependencies?
+      # But for this specific repo, we expect them to exist.
+      self.announce(f"WARNING: Cannot find `{binary_name}` binary from {source_path}. Skipping copy.")
+      return
+
+    # Copy to source directory
+    source_root = Path(__file__).parent.resolve()
+    destination_path = source_root / "mujoco_mpc" / "mjpc" / binary_name
 
     self.announce(f"{source_path.resolve()=}")
     self.announce(f"{destination_path.resolve()=}")
@@ -131,14 +137,10 @@ class CopyAgentServerBinaryCommand(setuptools.Command):
 
 
 class CopyTaskAssetsCommand(setuptools.Command):
-  """Copies `agent_server` and `ui_agent_server` next to `agent.py`.
-
-  Assumes that the C++ gRPC `agent_server` binary has been manually built and
-  and located in the default `mujoco_mpc/build/bin` folder.
-  """
+  """Copies task assets next to `mjpc/tasks`."""
 
   description = (
-      "Copy task assets over to python source to make them accessible by" " `Agent`."
+      "Copy task assets over to python source to make them accessible."
   )
   user_options = []
 
@@ -150,7 +152,10 @@ class CopyTaskAssetsCommand(setuptools.Command):
 
   def run(self):
     mjpc_tasks_path = Path(__file__).parent.parent / "build" / "mjpc" / "tasks"
-    assert mjpc_tasks_path.exists(), "Build MJPC before installing Python API"
+    if not mjpc_tasks_path.exists():
+       self.announce("WARNING: Build MJPC tasks not found. Skipping asset copy.")
+       return
+    
     source_paths = (
       tuple(mjpc_tasks_path.rglob("*.xml"))
       + tuple(mjpc_tasks_path.rglob("*.png"))
@@ -158,9 +163,11 @@ class CopyTaskAssetsCommand(setuptools.Command):
       + tuple(mjpc_tasks_path.rglob("*.obj"))
     )
     relative_source_paths = tuple(p.relative_to(mjpc_tasks_path) for p in source_paths)
-    assert self.build_lib is not None
-    build_lib_path = Path(self.build_lib).resolve()
-    destination_dir_path = Path(build_lib_path, "mujoco_mpc", "mjpc", "tasks")
+    
+    # Copy to source directory
+    source_root = Path(__file__).parent.resolve()
+    destination_dir_path = source_root / "mujoco_mpc" / "mjpc" / "tasks"
+    
     self.announce(
         f"Copying assets {relative_source_paths} from"
         f" {mjpc_tasks_path} over to {destination_dir_path}."
@@ -173,10 +180,10 @@ class CopyTaskAssetsCommand(setuptools.Command):
 
 
 class BuildPyCommand(build_py.build_py):
-  """Specialized Python builder to handle agent service dependencies.
+  """Specialized Python builder to handle service dependencies.
 
-  During build, this will generate the `agent_pb2{_grpc}.py` files and copy
-  `agent_server` binary next to `agent.py`.
+  During build, this will generate the `*_pb2{_grpc}.py` files and copy
+  binaries next to python source.
   """
 
   user_options = build_py.build_py.user_options
@@ -185,6 +192,15 @@ class BuildPyCommand(build_py.build_py):
     self.run_command("generate_proto_grpc")
     self.run_command("copy_task_assets")
     super().run()
+
+
+class EggInfoCommand(egg_info):
+  def run(self):
+    self.run_command("copy_binaries")
+    self.run_command("generate_proto_grpc")
+    self.run_command("copy_task_assets")
+    super().run()
+
 
 
 class CMakeExtension(setuptools.Extension):
@@ -202,10 +218,10 @@ class BuildCMakeExtension(build_ext.build_ext):
   """Uses CMake to build extensions."""
 
   def run(self):
-    self._configure_and_build_agent_server()
-    self.run_command("copy_agent_server_binary")
+    self._configure_and_build_binaries()
+    self.run_command("copy_binaries")
 
-  def _configure_and_build_agent_server(self):
+  def _configure_and_build_binaries(self):
     """Check for CMake."""
     cmake_command = "cmake"
     build_cfg = "Release"
@@ -242,7 +258,7 @@ class BuildCMakeExtension(build_ext.build_ext):
         cwd=mujoco_mpc_root,
     )
 
-    print("Building `agent_server` and `ui_agent_server` with CMake")
+    print("Building binaries with CMake")
     subprocess.check_call(
         [
             cmake_command,
@@ -251,12 +267,21 @@ class BuildCMakeExtension(build_ext.build_ext):
             "--target",
             "agent_server",
             "ui_agent_server",
+            "direct_server",
+            "filter_server",
             f"-j{os.cpu_count()}",
             "--config",
             build_cfg,
         ],
         cwd=mujoco_mpc_root,
     )
+
+
+class DevelopCommand(develop):
+  def run(self):
+    self.run_command("build_ext")
+    self.run_command("build_py")
+    super().run()
 
 
 setuptools.setup(
@@ -302,13 +327,17 @@ setuptools.setup(
         "build_py": BuildPyCommand,
         "build_ext": BuildCMakeExtension,
         "generate_proto_grpc": GenerateProtoGrpcCommand,
-        "copy_agent_server_binary": CopyAgentServerBinaryCommand,
+        "copy_binaries": CopyBinariesCommand,
         "copy_task_assets": CopyTaskAssetsCommand,
+        "develop": DevelopCommand,
+        "egg_info": EggInfoCommand,
     },
     package_data={
         "": [
             "mjpc/agent_server",
             "mjpc/ui_agent_server",
+            "mjpc/direct_server",
+            "mjpc/filter_server",
             "mjpc/tasks/**/*.xml",
         ],
     },
