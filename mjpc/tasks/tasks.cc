@@ -40,6 +40,8 @@
 #include "mjpc/tasks/shadow_reorient/hand.h"
 #include "mjpc/tasks/swimmer/swimmer.h"
 #include "mjpc/tasks/walker/walker.h"
+// CUSTOM TASK IMPORT
+#include "mjpc/tasks/custom_tasks/franka_reach/task/task.h"
 
 namespace mjpc {
 
@@ -69,6 +71,8 @@ std::vector<std::shared_ptr<Task>> GetTasks() {
       std::make_shared<QuadrupedHill>(),
       std::make_shared<Swimmer>(),
       std::make_shared<Walker>(),
+      // CUSTOM TASKS
+      std::make_shared<FrankaReach>(),
   };
 }
 }  // namespace mjpc

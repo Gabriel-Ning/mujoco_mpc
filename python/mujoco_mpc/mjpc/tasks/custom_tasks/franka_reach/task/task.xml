@@ -1,0 +1,58 @@
+<mujoco model="FrankaReach">
+  <!-- MJPC common settings (matches upstream tasks style) -->
+  <include file="../../../common.xml"/>
+
+  <!-- Your full scene; scene should include robot + assets -->
+  <include file="../model/scene_interactive.xml"/>
+
+  <size memory="2M"/>
+
+  <custom>
+    <!-- agent (copy the style from cartpole/panda) -->
+    <numeric name="agent_planner" data="1" />
+    <numeric name="agent_horizon" data="0.6" />
+    <numeric name="agent_timestep" data="0.01" />
+
+    <!-- sampling / gradient knobs (reasonable defaults; tune later) -->
+    <numeric name="sampling_trajectories" data="64"/>
+    <numeric name="sampling_spline_points" data="8" />
+    <numeric name="sampling_exploration" data="0.10" />
+    <numeric name="gradient_spline_points" data="8" />
+
+    <!-- Optional: allow residual selection / weights to be tuned from UI -->
+    <!-- <numeric name="residual_TargetPose" data="0 0 0  0 0 0" /> -->
+  </custom>
+
+  <sensor>
+    <!-- Cost terms (user sensors)
+    The `user="..."` tuple format is MJPC-internal metadata;
+    we keep the same pattern as upstream tasks.-->
+    <user name="ReachPos" dim="3" user="2 1 0 5 0.01"/>
+    <user name="ReachRot" dim="3" user="2 0.5 0 5 0.01"/>
+    <user name="Control"  dim="7" user="0 0.1 0 1 0.01"/>
+
+    <!-- Frames we will reference in C++ task code 
+         IMPORTANT: replace objname values to match your XML names. -->
+
+    <!-- End-effector site -->
+    <framepos  name="eef_pos"  objtype="site" objname="attachment_site"/>
+    <framequat name="eef_quat" objtype="site" objname="attachment_site"/>
+
+    <!-- Target site (typically attached to a mocap body) -->
+    <framepos  name="target_pos"  objtype="site" objname="target_site"/>
+    <framequat name="target_quat" objtype="site" objname="target_site"/>
+
+    <!-- Trace visualization - shows planned trajectory of end-effector -->
+    <framepos name="trace0" objtype="site" objname="attachment_site"/>
+  </sensor>
+
+  <keyframe>
+    <!-- Home pose matching the fr3_torque.xml keyframe -->
+    <key name="home" 
+         qpos="0 0 0 -1.57079 0 1.57079 -0.7853" 
+         ctrl="0 0 0 0 0 0 0"
+         mpos="0.4 0.2 0.5"
+         mquat="1 0 0 0"/>
+  </keyframe>
+
+</mujoco>
