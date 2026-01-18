@@ -3,8 +3,7 @@
   <include file="../../../common.xml"/>
 
   <!-- Your full scene; scene should include robot + assets -->
-  <include file="../model/scene_position.xml"/>
-
+  <include file="../model/scene_interactive.xml"/>
   <size memory="2M"/>
 
   <custom>
