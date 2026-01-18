@@ -24,6 +24,18 @@ from setuptools.command import build_py
 from setuptools.command.develop import develop
 from setuptools.command.egg_info import egg_info
 import subprocess
+from distutils import log
+from typing import Optional
+
+
+def _get_build_dir() -> pathlib.Path:
+  """Resolve the MJPC build directory (defaults to repo/.build/mujoco_mpc)."""
+  env_path: Optional[str] = os.environ.get("MJPC_BUILD_DIR")
+  if env_path:
+    return pathlib.Path(env_path).resolve()
+  # repo root = .../external/mujoco_mpc/../../
+  repo_root = pathlib.Path(__file__).resolve().parents[3]
+  return repo_root / ".build" / "mujoco_mpc"
 
 
 Path = pathlib.Path
@@ -116,7 +128,7 @@ class CopyBinariesCommand(setuptools.Command):
     self._copy_binary("filter_server")
 
   def _copy_binary(self, binary_name):
-    source_path = Path(f"../build/bin/{binary_name}")
+    source_path = _get_build_dir() / "bin" / binary_name
     if not source_path.exists():
       # Try looking in the build directory relative to the workspace root if possible, 
       # but ../build/bin is the standard convention here.
@@ -151,7 +163,7 @@ class CopyTaskAssetsCommand(setuptools.Command):
     self.set_undefined_options("build_ext", ("build_lib", "build_lib"))
 
   def run(self):
-    mjpc_tasks_path = Path(__file__).parent.parent / "build" / "mjpc" / "tasks"
+    mjpc_tasks_path = _get_build_dir() / "mjpc" / "tasks"
     if not mjpc_tasks_path.exists():
        self.announce("WARNING: Build MJPC tasks not found. Skipping asset copy.")
        return
@@ -218,6 +230,10 @@ class BuildCMakeExtension(build_ext.build_ext):
   """Uses CMake to build extensions."""
 
   def run(self):
+    if os.environ.get("MJPC_SKIP_CMAKE_BUILD", "").lower() in ("1", "true", "yes"):
+      log.warn("MJPC_SKIP_CMAKE_BUILD set, skipping CMake build and using existing binaries.")
+      self.run_command("copy_binaries")
+      return
     self._configure_and_build_binaries()
     self.run_command("copy_binaries")
 
@@ -226,7 +242,7 @@ class BuildCMakeExtension(build_ext.build_ext):
     cmake_command = "cmake"
     build_cfg = "Release"
     mujoco_mpc_root = Path(__file__).parent.parent
-    mujoco_mpc_build_dir = mujoco_mpc_root / "build"
+    mujoco_mpc_build_dir = _get_build_dir()
     cmake_configure_args = [
         "-DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE",
         f"-DCMAKE_BUILD_TYPE:STRING={build_cfg}",
@@ -245,6 +261,7 @@ class BuildCMakeExtension(build_ext.build_ext):
     # TODO(hartikainen): We currently configure the builds into
     # `mujoco_mpc/build`. This should use `self.build_{temp,lib}` instead, to
     # isolate the Python builds from the C++ builds.
+    mujoco_mpc_build_dir.mkdir(parents=True, exist_ok=True)
     print("Configuring CMake with the following arguments:")
     for arg in cmake_configure_args:
       print(f"  {arg}")

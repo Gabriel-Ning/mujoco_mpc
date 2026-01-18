@@ -84,6 +84,9 @@ add_library(
   tasks/swimmer/swimmer.h
   tasks/walker/walker.cc
   tasks/walker/walker.h
+  # custom tasks
+  tasks/custom_tasks/franka_reach/task/task.cc
+  tasks/custom_tasks/franka_reach/task/task.h
   planners/planner.cc
   planners/planner.h
   planners/policy.h
